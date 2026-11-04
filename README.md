@@ -15,7 +15,14 @@ Før spillet vælger man sværhedsgrad (tast 1-3 eller tryk på knappen):
 - **Trænet:** starter på niveau 2 og når niveau 5 efter 10 sekunder.
 - **Ekspert:** starter på niveau 5 og når niveau 10 efter 5 sekunder.
 
-Hver sværhedsgrad har sin egen rekord. Man har 3 hjerter. Spillet bliver sværere for hvert niveau (hurtigere, tættere forhindringer, fugle fra niveau 2, store sten fra niveau 3), og det fortsætter, indtil man har mistet alle hjerter.
+Hver sværhedsgrad har sin egen rekord.
+
+**Variation:**
+- Stjerner (+25 point) hænger over forhindringer, højt oppe i pauser (hop!) og lavt under fugleflokke (duk!). 10 stjerner fylder energibaren og giver skjold.
+- Power-ups højt over forhindringer: ekstra hjerte (op til 5) og skjold i 6 sekunder. Med skjold bliver forhindringer skubbet væk.
+- Forhindringer: sten, høj sten, stor sten, busk, svamp, træstamme og pindsvin, der løber imod én.
+- Fugleflokke i forskellige farver, der kan vugge op og ned, og en hurtig ravn (fra niveau 3), som man kan dukke sig under eller hoppe over.
+- Himlen skifter fra dag over solnedgang til nat, jo højere niveau. Man har 3 hjerter. Spillet bliver sværere for hvert niveau (hurtigere, tættere forhindringer, fugle fra niveau 2, store sten fra niveau 3), og det fortsætter, indtil man har mistet alle hjerter.
 
 Sobby bliver mere og mere rød i hovedet for hvert niveau, og smiler mindre og mindre. Han begynder at svede, når man er mindre end 100 point fra sin rekord, og får en rød superhelte-kappe på, når rekorden er slået. På tablet og mobil står knapperne ved siden af eller under spillet, så de ikke dækker Sobby.
 

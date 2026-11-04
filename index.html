@@ -97,6 +97,10 @@
     speedPerLevel: 40,
     maxSpeed: 760,
     lives: 3,
+    maxLives: 5,          // man kan samle ekstra hjerter op til dette antal
+    shieldTime: 6,        // sekunder skjoldet varer
+    energyForShield: 10,  // stjerner der skal til for at fylde energibaren (giver skjold)
+    starPoints: 25,
     hitForgiveness: 10,   // gør hitboxe mindre, så det er børnevenligt
     testHighscore: 500,   // TESTFASE: rekorden sættes til dette tal, hver gang der kommer en ny version (sæt til null for at slå fra)
   };
@@ -121,6 +125,9 @@
     jump: () => beep(400, 0.18, 'square', 0.06, 800),
     hit: () => beep(220, 0.35, 'sawtooth', 0.08, 80),
     level: () => { beep(523, 0.12); setTimeout(() => beep(659, 0.12), 120); setTimeout(() => beep(784, 0.2), 240); },
+    star: () => { beep(988, 0.07, 'triangle', 0.07); setTimeout(() => beep(1319, 0.1, 'triangle', 0.07), 60); },
+    power: () => { [523, 659, 784, 1047].forEach((f, i) => setTimeout(() => beep(f, 0.12, 'triangle', 0.08), i * 80)); },
+    pop: () => beep(500, 0.15, 'square', 0.06, 1400),
     over: () => { beep(392, 0.2, 'triangle', 0.1); setTimeout(() => beep(330, 0.2, 'triangle', 0.1), 200); setTimeout(() => beep(262, 0.4, 'triangle', 0.1), 400); },
   };
 
@@ -152,7 +159,7 @@
   function saveAllHigh(v) { MODES.forEach((_, i) => saveHigh(v, i)); }
   // Test: åbn spillet med #rekord500 i slutningen af linket for at sætte rekorden til 500
   // (#rekord0 nulstiller rekorden). Virker også uden gemt data, så længe siden er åben.
-  const GAME_VERSION = 9;  // tælles op ved hver ny version
+  const GAME_VERSION = 10;  // tælles op ved hver ny version
   let testHigh = CFG.testHighscore;
   try {
     if (CFG.testHighscore !== null && localStorage.getItem('sobbyVersion') !== String(GAME_VERSION)) {
@@ -165,7 +172,7 @@
 
   // ---------- Spiltilstand ----------
   let state = 'start';  // start | play | pause | over
-  let sobby, obstacles, clouds, hills, score, level, speed, lives, invuln, spawnTimer, nextType, recordBeaten, playTime, banner, time, highscore, newHigh;
+  let sobby, obstacles, clouds, hills, score, level, speed, lives, invuln, spawnTimer, nextType, recordBeaten, playTime, items, popups, shield, energy, powerTimer, skyP = 0, banner, time, highscore, newHigh;
 
   function speedFor(lvl) { return Math.min(CFG.startSpeed + (lvl - 1) * CFG.speedPerLevel, CFG.maxSpeed); }
 
@@ -175,6 +182,7 @@
     score = 0; playTime = 0; level = levelAt(0); speed = speedFor(level); lives = CFG.lives;
     invuln = 0; spawnTimer = 1.0; nextType = 'rock'; banner = { text: mode().name + ' – niveau ' + level, t: 1.8 }; time = 0;
     highscore = loadHigh(); newHigh = false; recordBeaten = false;
+    items = []; popups = []; shield = 0; energy = 0; powerTimer = 10 + Math.random() * 8;
   }
 
   clouds = Array.from({ length: 5 }, (_, i) => ({ x: i * 220 + Math.random() * 100, y: 40 + Math.random() * 90, s: 0.6 + Math.random() * 0.6 }));
@@ -252,15 +260,19 @@
 
   // En fugleflok har 3-5 fugle, der flyver forskudt. Den nederste er lige over Sobbys
   // hoved, når den dukker sig, og den øverste er så højt, at man ikke kan hoppe over.
+  const BIRD_COLORS = ['#7e57c2', '#1e88e5', '#fb8c00', '#ec407a', '#26a69a'];
   function makeFlock() {
     const n = 3 + Math.floor(Math.random() * 3);
+    const color = BIRD_COLORS[Math.floor(Math.random() * BIRD_COLORS.length)];
+    // Fra niveau 2 kan flokken vugge lidt op og ned (aldrig så meget, at man kan hoppe over eller løbe under)
+    const bob = level >= 2 && Math.random() < 0.5 ? 7 : 0;
     const step = (FLOCK_BOTTOM - FLOCK_TOP - 30) / (n - 1);
     const birds = [];
     for (let i = 0; i < n; i++) {
       birds.push({ dx: Math.random() * 44, dy: FLOCK_BOTTOM - 15 - i * step - FLOCK_TOP + (Math.random() * 10 - 5), ph: Math.random() * 6 });
     }
     const maxDx = Math.max(...birds.map(b => b.dx));
-    return { type: 'bird', w: 68 + maxDx, h: FLOCK_BOTTOM - FLOCK_TOP, y: FLOCK_TOP, flap: 0, birds };
+    return { type: 'bird', w: 68 + maxDx, h: FLOCK_BOTTOM - FLOCK_TOP, y: FLOCK_TOP, baseY: FLOCK_TOP, bob, bobPh: Math.random() * 6, flap: 0, birds, color };
   }
 
   function makeObstacle(type) {
@@ -269,6 +281,12 @@
       case 'tallrock': return { type, w: 50, h: 120, y: GROUND - 120 };
       case 'bigrock': return { type, w: 84, h: 66, y: GROUND - 66 };
       case 'bush': return { type, w: 72, h: 54, y: GROUND - 54 };
+      case 'log': return { type, w: 110, h: 34, y: GROUND - 34 };
+      case 'mushroom': return { type, w: 58, h: 52, y: GROUND - 52, color: Math.random() < 0.5 ? '#e53935' : '#8e24aa' };
+      // Pindsvin løber imod Sobby (hurtigere end jorden)
+      case 'hedgehog': return { type, w: 58, h: 38, y: GROUND - 38, vx: 70, step: 0 };
+      // Ravn: én hurtig fugl i dukkehøjde. Man kan dukke sig under eller hoppe over.
+      case 'crow': return { type, w: 68, h: 30, y: FLOCK_BOTTOM - 30, vx: 110, flap: 0 };
       default: return rock(0);
     }
   }
@@ -276,16 +294,27 @@
   // Lavtflyvende fugl: for lav til at dukke sig under, så man skal hoppe over den
   function lowBird(x, bottom) { return { type: 'lowbird', w: 68, h: 30, y: GROUND - bottom - 30, x, flap: Math.random() * 6 }; }
 
-  // Vælg næste forhindring. Der kommer aldrig to fugleflokke lige efter hinanden.
+  function isBirdType(t) { return t === 'bird' || t === 'crow'; }
+  // Ekstra ventetid før en forhindring, der bevæger sig hurtigere end jorden, så den ikke indhenter den forrige
+  function catchUpTime(type) {
+    const vx = type === 'crow' ? 110 : type === 'hedgehog' ? 70 : 0;
+    if (!vx) return 0;
+    const dist = W + 20 - 157;
+    return dist / speed - dist / (speed + vx);
+  }
+
+  // Vælg næste forhindring. Der kommer aldrig to fugle-forhindringer lige efter hinanden.
   function chooseType(prev) {
     const birdChance = Math.min(0.4 + (level - 1) * 0.03, 0.55);
-    if (prev !== 'bird' && Math.random() < birdChance) return 'bird';
+    if (!isBirdType(prev) && Math.random() < birdChance) return level >= 3 && Math.random() < 0.3 ? 'crow' : 'bird';
     if (level >= 4 && Math.random() < 0.25) return 'combo';
     const r = Math.random();
     const tallChance = level >= 2 ? Math.min(0.1 + level * 0.03, 0.3) : 0;
     if (r < tallChance) return 'tallrock';
     if (level >= 3 && r < tallChance + 0.2) return 'bigrock';
-    return Math.random() < 0.5 ? 'rock' : 'bush';
+    if (level >= 2 && Math.random() < 0.2) return 'hedgehog';
+    const basics = ['rock', 'bush', 'log', 'mushroom'];
+    return basics[Math.floor(Math.random() * basics.length)];
   }
 
   function spawnObstacle() {
@@ -318,10 +347,65 @@
       extra = true;
     }
     if (extra) spawnTimer += 0.4;
+    if (o.type === 'log') spawnTimer += 0.15;   // lang stamme: lidt længere tid at lande
 
     nextType = chooseType(o.type);
-    if (nextType === 'bird') spawnTimer = Math.max(spawnTimer, birdAfterGround() + (extra ? 0.4 : 0));
-    if (o.type === 'bird') spawnTimer = Math.max(spawnTimer, groundAfterBird());
+    if (isBirdType(nextType)) spawnTimer = Math.max(spawnTimer, birdAfterGround() + (extra ? 0.4 : 0) + (o.type === 'log' ? 0.15 : 0));
+    if (isBirdType(o.type)) spawnTimer = Math.max(spawnTimer, groundAfterBird());
+    spawnTimer += catchUpTime(nextType);
+
+    placeItems(o, extra);
+  }
+
+  // ---------- Stjerner og power-ups ----------
+  function star(x, y) { items.push({ type: 'star', x, y, r: 13, ph: Math.random() * 6 }); }
+  function placeItems(o, extra) {
+    if (o.vx) return;  // intet over forhindringer, der bevæger sig
+    const cx = o.x + o.w / 2;
+    if (o.type === 'bird') {
+      // Stjerner lavt under flokken: tages, når man dukker sig forbi
+      if (Math.random() < 0.5) for (let i = 0; i < 3; i++) star(o.x + 10 + i * 34, GROUND - 22);
+      return;
+    }
+    if (o.type === 'crow' || o.type === 'lowbird') return;
+    const lift = o.type === 'tallrock' ? 45 : 0;
+    if (powerTimer <= 0 && !extra) {
+      // Power-up højt over forhindringen: kræver et godt hop
+      const kind = lives < CFG.maxLives && Math.random() < 0.5 ? 'heart' : 'shield';
+      items.push({ type: kind, x: cx, y: GROUND - 165 - lift, r: 17, ph: 0 });
+      powerTimer = 15 + Math.random() * 10;
+      return;
+    }
+    if (Math.random() < 0.45) {
+      // Bue af stjerner over forhindringen
+      const ext = extra ? 40 : 0;
+      star(cx - 48, GROUND - 120 - lift); star(cx + ext / 2, GROUND - 150 - lift); star(cx + 48 + ext, GROUND - 120 - lift);
+    } else if (spawnTimer > 1.7 && Math.random() < 0.6) {
+      // Stjerner højt oppe i en pause: hop op og tag dem
+      const gx = o.x + o.w + speed * spawnTimer * 0.5;
+      const h = 130 + Math.random() * 30;
+      for (let i = 0; i < 3; i++) star(gx + i * 36 - 36, GROUND - h - (i === 1 ? 12 : 0));
+    }
+  }
+
+  function collect(it) {
+    if (it.type === 'star') {
+      score += CFG.starPoints; energy++;
+      popups.push({ text: '+' + CFG.starPoints, x: it.x, y: it.y, t: 0.9, color: '#ffe066' });
+      sfx.star();
+      if (energy >= CFG.energyForShield) {
+        energy = 0; shield = CFG.shieldTime;
+        banner = { text: 'Fuld energi: skjold!', t: 1.8 }; sfx.power();
+      }
+    } else if (it.type === 'heart') {
+      lives = Math.min(lives + 1, CFG.maxLives);
+      popups.push({ text: '+1 liv', x: it.x, y: it.y, t: 1.2, color: '#ff8a80' });
+      banner = { text: 'Ekstra liv!', t: 1.5 }; sfx.power();
+    } else if (it.type === 'shield') {
+      shield = CFG.shieldTime;
+      popups.push({ text: 'Skjold!', x: it.x, y: it.y, t: 1.2, color: '#81d4fa' });
+      banner = { text: 'Skjold!', t: 1.5 }; sfx.power();
+    }
   }
 
   // ---------- Opdatering ----------
@@ -333,6 +417,9 @@
     hills.forEach(h => { h.x -= bgSpeed * 0.3 * dt; if (h.x < -h.r * 2) h.x += 240 * hills.length; });
 
     if (banner.t > 0) banner.t -= dt;
+    // Himlen skifter fra dag (niveau 1) over eftermiddag og solnedgang til nat (niveau 10)
+    const skyTarget = state === 'start' ? 0 : Math.min(Math.max((level - 1) / 3, 0), 3);
+    skyP += (skyTarget - skyP) * Math.min(dt * 0.8, 1);
     if (state !== 'play') return;
 
     // Point og niveau
@@ -369,8 +456,26 @@
     // Forhindringer
     spawnTimer -= dt;
     if (spawnTimer <= 0) spawnObstacle();
-    obstacles.forEach(o => { o.x -= speed * dt; if (o.flap !== undefined) o.flap += dt * 12; });
+    obstacles.forEach(o => {
+      o.x -= (speed + (o.vx || 0)) * dt;
+      if (o.flap !== undefined) o.flap += dt * (o.type === 'crow' ? 18 : 12);
+      if (o.bob) o.y = o.baseY + Math.sin(time * 3 + o.bobPh) * o.bob;
+      if (o.step !== undefined) o.step += dt * 14;
+    });
     obstacles = obstacles.filter(o => o.x + o.w > -20);
+
+    // Stjerner og power-ups
+    powerTimer -= dt;
+    if (shield > 0) shield -= dt;
+    const sb = sobbyBox();
+    items.forEach(it => {
+      it.x -= speed * dt; it.ph += dt * 4;
+      const nx = Math.max(sb.x, Math.min(it.x, sb.x + sb.w)), ny = Math.max(sb.y, Math.min(it.y, sb.y + sb.h));
+      if ((nx - it.x) ** 2 + (ny - it.y) ** 2 <= it.r * it.r) { it.taken = true; collect(it); }
+    });
+    items = items.filter(it => !it.taken && it.x > -30);
+    popups.forEach(pp => { pp.t -= dt; pp.y -= 40 * dt; });
+    popups = popups.filter(pp => pp.t > 0);
 
     // Kollision
     if (invuln <= 0) {
@@ -378,6 +483,12 @@
       for (const o of obstacles) {
         const f = CFG.hitForgiveness;
         if (box.x < o.x + o.w - f && box.x + box.w > o.x + f && box.y < o.y + o.h - f && box.y + box.h > o.y + f) {
+          if (shield > 0) {
+            // Skjoldet skubber forhindringen væk
+            o.gone = true; score += 10; sfx.pop();
+            popups.push({ text: 'Puf! +10', x: o.x + o.w / 2, y: Math.max(o.y, GROUND - 120), t: 0.9, color: '#81d4fa' });
+            continue;
+          }
           lives--;
           sfx.hit();
           if (lives <= 0) { gameOver(); }
@@ -385,6 +496,7 @@
           break;
         }
       }
+      obstacles = obstacles.filter(o => !o.gone);
     }
   }
 
@@ -401,19 +513,51 @@
   }
 
   // ---------- Tegning ----------
+  const SKY = [
+    { top: '#7ec8f2', bot: '#d6f0ff', hill: '#9ad48a', sun: '#ffe066' },  // dag
+    { top: '#5aa3e6', bot: '#ffe0a8', hill: '#8cc47a', sun: '#ffc93c' },  // eftermiddag
+    { top: '#4b4f9e', bot: '#ff9a6a', hill: '#6f9e62', sun: '#ff7043' },  // solnedgang
+    { top: '#0e1a40', bot: '#2c3e75', hill: '#3e6148', sun: '#f5f3ce' },  // nat
+  ];
+  const SKY_STARS = Array.from({ length: 40 }, () => ({ x: Math.random() * 720, y: Math.random() * 200, r: 0.8 + Math.random() * 1.4, ph: Math.random() * 6 }));
+  function mix(a, b, t) {
+    const pa = [1, 3, 5].map(i => parseInt(a.slice(i, i + 2), 16)), pb = [1, 3, 5].map(i => parseInt(b.slice(i, i + 2), 16));
+    return 'rgb(' + pa.map((v, i) => Math.round(v + (pb[i] - v) * t)).join(',') + ')';
+  }
+  function skyColor(key) {
+    const i = Math.min(Math.floor(skyP), 2), t = skyP - i;
+    return mix(SKY[i][key], SKY[i + 1][key], t);
+  }
+
   function drawBackground() {
+    const night = Math.min(Math.max(skyP - 2, 0), 1);
     const sky = ctx.createLinearGradient(0, 0, 0, GROUND);
-    sky.addColorStop(0, '#7ec8f2');
-    sky.addColorStop(1, '#d6f0ff');
+    sky.addColorStop(0, skyColor('top'));
+    sky.addColorStop(1, skyColor('bot'));
     ctx.fillStyle = sky;
     ctx.fillRect(0, 0, W, H);
 
-    // Sol
-    ctx.fillStyle = '#ffe066';
-    ctx.beginPath(); ctx.arc(W - 250, 70, 38, 0, Math.PI * 2); ctx.fill();
+    // Stjerner på nattehimlen
+    if (night > 0) {
+      ctx.fillStyle = '#fff';
+      SKY_STARS.forEach(st => { ctx.globalAlpha = night * (0.5 + 0.5 * Math.sin(time * 2 + st.ph)); ctx.beginPath(); ctx.arc(st.x, st.y, st.r, 0, Math.PI * 2); ctx.fill(); });
+      ctx.globalAlpha = 1;
+    }
+
+    // Sol, der går ned, og måne om natten
+    const sunY = 70 + Math.min(skyP, 2) * 35;
+    ctx.globalAlpha = 1 - night;
+    ctx.fillStyle = skyColor('sun');
+    ctx.beginPath(); ctx.arc(W - 250, sunY, 38, 0, Math.PI * 2); ctx.fill();
+    ctx.globalAlpha = night;
+    ctx.fillStyle = '#f5f3ce';
+    ctx.beginPath(); ctx.arc(W - 250, 60, 30, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = skyColor('top');
+    ctx.beginPath(); ctx.arc(W - 238, 52, 26, 0, Math.PI * 2); ctx.fill();
+    ctx.globalAlpha = 1;
 
     // Skyer
-    ctx.fillStyle = '#fff';
+    ctx.fillStyle = night > 0 ? `rgba(255,255,255,${1 - night * 0.7})` : '#fff';
     clouds.forEach(c => {
       ctx.beginPath();
       ctx.arc(c.x, c.y, 22 * c.s, 0, Math.PI * 2);
@@ -423,7 +567,7 @@
     });
 
     // Bakker
-    ctx.fillStyle = '#9ad48a';
+    ctx.fillStyle = skyColor('hill');
     hills.forEach(h => { ctx.beginPath(); ctx.arc(h.x + h.r, GROUND + 30, h.r, Math.PI, 0); ctx.fill(); });
 
     // Jord
@@ -438,6 +582,8 @@
       ctx.fillRect(x, GROUND + 34, 30, 5);
       ctx.fillRect(x + 40, GROUND + 58, 20, 5);
     }
+    // Lidt mørkere jord om aftenen og natten
+    if (skyP > 1) { ctx.fillStyle = `rgba(10, 20, 50, ${0.3 * Math.min(skyP - 1, 2) / 2})`; ctx.fillRect(0, GROUND, W, H - GROUND); }
   }
 
   function drawSobby() {
@@ -633,25 +779,121 @@
       [[18, 18], [38, 12], [46, 30], [26, 32]].forEach(([dx, dy]) => { ctx.beginPath(); ctx.arc(dx, dy, 3.5, 0, Math.PI * 2); ctx.fill(); });
     } else if (o.type === 'bird') {
       // Flok af forskudte fugle
-      for (const b of o.birds) drawBird(o.x + 42 + b.dx, o.y + b.dy, o.flap + b.ph);
+      for (const b of o.birds) drawBird(o.x + 42 + b.dx, o.y + b.dy + Math.sin(time * 5 + b.ph) * 2, o.flap + b.ph, o.color);
     } else if (o.type === 'lowbird') {
-      drawBird(o.x + 42, o.y + o.h / 2, o.flap);
+      drawBird(o.x + 42, o.y + o.h / 2, o.flap, '#fb8c00');
+    } else if (o.type === 'crow') {
+      drawBird(o.x + 42, o.y + o.h / 2, o.flap, '#37474f', true);
+    } else if (o.type === 'log') {
+      ctx.fillStyle = '#8d5a2b';
+      ctx.beginPath(); if (ctx.roundRect) ctx.roundRect(o.x, o.y + 2, o.w, o.h - 2, 14); else ctx.rect(o.x, o.y + 2, o.w, o.h - 2); ctx.fill();
+      ctx.strokeStyle = '#6d4220'; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(o.x + 14, o.y + 12); ctx.lineTo(o.x + o.w - 26, o.y + 12); ctx.moveTo(o.x + 20, o.y + 24); ctx.lineTo(o.x + o.w - 34, o.y + 24); ctx.stroke();
+      ctx.fillStyle = '#d7a86e';
+      ctx.beginPath(); ctx.ellipse(o.x + o.w - 10, o.y + o.h / 2 + 1, 10, o.h / 2 - 1, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = '#a0703c';
+      ctx.beginPath(); ctx.ellipse(o.x + o.w - 10, o.y + o.h / 2 + 1, 5, 8, 0, 0, Math.PI * 2); ctx.stroke();
+      ctx.fillStyle = '#5f9e47';
+      ctx.beginPath(); ctx.ellipse(o.x + 34, o.y + 3, 10, 4, 0, 0, Math.PI * 2); ctx.fill();
+    } else if (o.type === 'mushroom') {
+      ctx.fillStyle = '#f3e5c8';
+      ctx.fillRect(o.x + o.w / 2 - 9, o.y + 22, 18, o.h - 22);
+      ctx.fillStyle = o.color;
+      ctx.beginPath(); ctx.ellipse(o.x + o.w / 2, o.y + 24, o.w / 2, 24, 0, Math.PI, 0); ctx.closePath(); ctx.fill();
+      ctx.fillStyle = '#fff';
+      [[-14, 12], [6, 6], [16, 16], [-2, 18]].forEach(([dx, dy]) => { ctx.beginPath(); ctx.arc(o.x + o.w / 2 + dx, o.y + dy, 4, 0, Math.PI * 2); ctx.fill(); });
+    } else if (o.type === 'hedgehog') {
+      const cx = o.x + o.w / 2, by = o.y + o.h;
+      ctx.fillStyle = '#5d4037';
+      ctx.beginPath();
+      ctx.moveTo(o.x + 6, by - 4);
+      for (let i = 0; i <= 8; i++) { const a = Math.PI + i * Math.PI / 8; ctx.lineTo(cx + 6 + Math.cos(a) * 30 * (i % 2 ? 1.1 : 0.85), by - 6 + Math.sin(a) * 36 * (i % 2 ? 1.05 : 0.8)); }
+      ctx.closePath(); ctx.fill();
+      ctx.strokeStyle = '#bcaaa4'; ctx.lineWidth = 2; ctx.stroke();
+      ctx.fillStyle = '#d7b98e';
+      ctx.beginPath(); ctx.ellipse(o.x + 12, by - 12, 13, 10, -0.2, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#222';
+      ctx.beginPath(); ctx.arc(o.x + 1, by - 13, 3, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(o.x + 10, by - 17, 2, 0, Math.PI * 2); ctx.fill();
+      const leg = Math.sin(o.step) * 4;
+      ctx.fillStyle = '#4e342e';
+      ctx.fillRect(o.x + 16 + leg, by - 5, 6, 5); ctx.fillRect(o.x + 36 - leg, by - 5, 6, 5);
     }
     ctx.restore();
   }
 
-  function drawBird(cx, cy, flap) {
+  function drawBird(cx, cy, flap, color = '#7e57c2', crow = false) {
     const wing = Math.sin(flap) * 14;
-    ctx.fillStyle = '#7e57c2';
+    ctx.fillStyle = color;
+    if (crow) {  // lys kant, så ravnen kan ses om natten
+      ctx.strokeStyle = '#cfd8dc'; ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.ellipse(cx, cy, 26, 15, 0, 0, Math.PI * 2); ctx.stroke();
+      ctx.beginPath(); ctx.arc(cx - 21, cy - 5, 11, 0, Math.PI * 2); ctx.stroke();
+    }
     ctx.beginPath(); ctx.ellipse(cx, cy, 26, 15, 0, 0, Math.PI * 2); ctx.fill();
     ctx.beginPath(); ctx.moveTo(cx - 6, cy - 2); ctx.lineTo(cx + 10, cy - 2); ctx.lineTo(cx + 2, cy - 20 - wing); ctx.closePath(); ctx.fill();
     ctx.beginPath(); ctx.arc(cx - 21, cy - 5, 11, 0, Math.PI * 2); ctx.fill();
-    ctx.fillStyle = '#ffb300';
+    ctx.fillStyle = crow ? '#ffca28' : '#ffb300';
     ctx.beginPath(); ctx.moveTo(cx - 30, cy - 8); ctx.lineTo(cx - 42, cy - 3); ctx.lineTo(cx - 30, cy); ctx.closePath(); ctx.fill();
     ctx.fillStyle = '#fff';
     ctx.beginPath(); ctx.arc(cx - 23, cy - 8, 3.5, 0, Math.PI * 2); ctx.fill();
-    ctx.fillStyle = '#222';
+    ctx.fillStyle = crow ? '#d50000' : '#222';
     ctx.beginPath(); ctx.arc(cx - 24, cy - 8, 1.8, 0, Math.PI * 2); ctx.fill();
+    if (crow) {  // vrede øjenbryn på ravnen
+      ctx.strokeStyle = '#111'; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(cx - 29, cy - 14); ctx.lineTo(cx - 18, cy - 11); ctx.stroke();
+    }
+  }
+
+  // ---------- Tegning af stjerner, power-ups, skjold og point ----------
+  function drawStarShape(x, y, r, rot) {
+    ctx.beginPath();
+    for (let i = 0; i < 10; i++) {
+      const a = rot + i * Math.PI / 5 - Math.PI / 2, rr = i % 2 ? r * 0.45 : r;
+      ctx.lineTo(x + Math.cos(a) * rr, y + Math.sin(a) * rr);
+    }
+    ctx.closePath();
+  }
+  function drawItems() {
+    for (const it of items) {
+      const bobY = it.y + Math.sin(it.ph) * 3;
+      if (it.type === 'star') {
+        ctx.fillStyle = '#ffd600'; ctx.strokeStyle = '#f57f17'; ctx.lineWidth = 2;
+        drawStarShape(it.x, bobY, it.r + 1, Math.sin(it.ph * 0.5) * 0.3); ctx.fill(); ctx.stroke();
+        ctx.fillStyle = 'rgba(255,255,255,.7)'; ctx.beginPath(); ctx.arc(it.x - 3, bobY - 3, 2.5, 0, Math.PI * 2); ctx.fill();
+      } else {
+        // Glød bag power-up
+        const glow = ctx.createRadialGradient(it.x, bobY, 4, it.x, bobY, 32);
+        glow.addColorStop(0, it.type === 'heart' ? 'rgba(255,138,128,.8)' : 'rgba(129,212,250,.8)');
+        glow.addColorStop(1, 'rgba(255,255,255,0)');
+        ctx.fillStyle = glow; ctx.beginPath(); ctx.arc(it.x, bobY, 32, 0, Math.PI * 2); ctx.fill();
+        if (it.type === 'heart') { ctx.save(); ctx.translate(it.x, bobY - 13); ctx.scale(1.2, 1.2); drawHeart(0, 0, true); ctx.restore(); }
+        else drawShieldIcon(it.x, bobY, 15);
+      }
+    }
+  }
+  function drawShieldIcon(x, y, r) {
+    ctx.fillStyle = '#29b6f6'; ctx.strokeStyle = '#fff'; ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(x, y - r); ctx.lineTo(x + r, y - r * 0.6); ctx.quadraticCurveTo(x + r, y + r * 0.6, x, y + r);
+    ctx.quadraticCurveTo(x - r, y + r * 0.6, x - r, y - r * 0.6); ctx.closePath();
+    ctx.fill(); ctx.stroke();
+  }
+  function drawShieldBubble() {
+    if (shield <= 0 || state !== 'play') return;
+    if (shield < 1.5 && Math.floor(shield * 8) % 2 === 0) return;  // blinker, når det er ved at løbe ud
+    const h = sobby.ducking ? 40 : sobby.h;
+    const cx = sobby.x - 4, cy = sobby.y - h / 2 - 8;
+    const r = 54 + Math.sin(time * 6) * 2;
+    const g = ctx.createRadialGradient(cx, cy, r * 0.5, cx, cy, r);
+    g.addColorStop(0, 'rgba(129,212,250,0.05)'); g.addColorStop(1, 'rgba(41,182,246,0.45)');
+    ctx.fillStyle = g; ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,.8)'; ctx.lineWidth = 2; ctx.stroke();
+    ctx.fillStyle = 'rgba(255,255,255,.6)'; ctx.beginPath(); ctx.ellipse(cx - r * 0.4, cy - r * 0.45, 10, 5, -0.6, 0, Math.PI * 2); ctx.fill();
+  }
+  function drawPopups() {
+    for (const pp of popups) { ctx.globalAlpha = Math.min(1, pp.t * 2); text(pp.text, pp.x, pp.y, 20, pp.color); }
+    ctx.globalAlpha = 1;
   }
 
   function drawHeart(x, y, full) {
@@ -676,7 +918,15 @@
   }
 
   function drawHUD() {
-    for (let i = 0; i < CFG.lives; i++) drawHeart(30 + i * 34, 16, i < lives);
+    for (let i = 0; i < Math.max(CFG.lives, lives); i++) drawHeart(30 + i * 34, 16, i < lives);
+    // Energibar: fyldes af stjerner, giver skjold når den er fuld
+    const bx = 22, by = 52, bw = 120;
+    ctx.fillStyle = 'rgba(0,0,0,.35)'; ctx.beginPath(); if (ctx.roundRect) ctx.roundRect(bx, by, bw, 12, 6); else ctx.rect(bx, by, bw, 12); ctx.fill();
+    const fill = shield > 0 ? shield / CFG.shieldTime : energy / CFG.energyForShield;
+    ctx.fillStyle = shield > 0 ? '#29b6f6' : '#ffd600';
+    if (fill > 0) { ctx.beginPath(); if (ctx.roundRect) ctx.roundRect(bx, by, bw * fill, 12, 6); else ctx.rect(bx, by, bw * fill, 12); ctx.fill(); }
+    ctx.fillStyle = shield > 0 ? '#29b6f6' : '#ffd600'; ctx.strokeStyle = '#333'; ctx.lineWidth = 1.5;
+    if (shield > 0) drawShieldIcon(bx + bw + 14, by + 6, 8); else { drawStarShape(bx + bw + 14, by + 6, 9, 0); ctx.fill(); ctx.stroke(); }
     text('Point: ' + Math.floor(score), W - 20, 40, 26, '#fff', 'right');
     text(mode().name + ' · niveau ' + level, W - 20, 72, 20, '#ffe066', 'right');
     if (banner.t > 0 && state === 'play') {
@@ -707,8 +957,11 @@
 
   function draw() {
     drawBackground();
+    if (state !== 'start') drawItems();
     obstacles.forEach(drawObstacle);
     drawSobby();
+    drawShieldBubble();
+    if (state === 'play') drawPopups();
 
     if (state === 'start') {
       overlay();
@@ -750,7 +1003,7 @@
   requestAnimationFrame(loop);
 
   // Til test
-  window.__sobby = { get state() { return state; }, get score() { return score; }, get level() { return level; }, get lives() { return lives; }, get obstacles() { return obstacles; }, get speed() { return speed; }, get playTime() { return playTime; }, get mode() { return mode().id; } };
+  window.__sobby = { get state() { return state; }, get score() { return score; }, get level() { return level; }, get lives() { return lives; }, get obstacles() { return obstacles; }, get speed() { return speed; }, get playTime() { return playTime; }, get mode() { return mode().id; }, get items() { return items; }, get shield() { return shield; }, get energy() { return energy; } };
 })();
 </script>
 </body>
