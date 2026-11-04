@@ -130,7 +130,7 @@
   function saveHigh(v) { testHigh = v; try { localStorage.setItem('sobbyHigh', String(v)); } catch (e) {} }
   // Test: åbn spillet med #rekord500 i slutningen af linket for at sætte rekorden til 500
   // (#rekord0 nulstiller rekorden). Virker også uden gemt data, så længe siden er åben.
-  const GAME_VERSION = 7;  // tælles op ved hver ny version
+  const GAME_VERSION = 8;  // tælles op ved hver ny version
   let testHigh = CFG.testHighscore;
   try {
     if (CFG.testHighscore !== null && localStorage.getItem('sobbyVersion') !== String(GAME_VERSION)) {
