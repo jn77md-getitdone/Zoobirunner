@@ -93,10 +93,9 @@
   const CFG = {
     gravity: 2600,
     jumpSpeed: 980,
-    startSpeed: 300,      // pixels pr. sekund på niveau 1
-    speedPerLevel: 35,
-    maxSpeed: 720,
-    pointsPerLevel: 200,
+    startSpeed: 330,      // pixels pr. sekund på niveau 1
+    speedPerLevel: 40,
+    maxSpeed: 760,
     lives: 3,
     hitForgiveness: 10,   // gør hitboxe mindre, så det er børnevenligt
     testHighscore: 500,   // TESTFASE: rekorden sættes til dette tal, hver gang der kommer en ny version (sæt til null for at slå fra)
@@ -125,31 +124,56 @@
     over: () => { beep(392, 0.2, 'triangle', 0.1); setTimeout(() => beep(330, 0.2, 'triangle', 0.1), 200); setTimeout(() => beep(262, 0.4, 'triangle', 0.1), 400); },
   };
 
-  // ---------- Highscore ----------
-  function loadHigh() { try { const v = localStorage.getItem('sobbyHigh'); if (v !== null) return parseInt(v, 10) || 0; } catch (e) {} return testHigh || 0; }
-  function saveHigh(v) { testHigh = v; try { localStorage.setItem('sobbyHigh', String(v)); } catch (e) {} }
+  // ---------- Sværhedsgrader ----------
+  // Niveauet stiger hurtigt i starten (fra startLevel til rampLevel på rampTime sekunder)
+  // og derefter ét niveau for hver 'every' sekunder.
+  const MODES = [
+    { id: 'begynder', name: 'Begynder', startLevel: 1, rampLevel: 3,  rampTime: 20, every: 12 },
+    { id: 'traenet',  name: 'Trænet',   startLevel: 2, rampLevel: 5,  rampTime: 10, every: 9 },
+    { id: 'ekspert',  name: 'Ekspert',  startLevel: 5, rampLevel: 10, rampTime: 5,  every: 7 },
+  ];
+  let modeIndex = 0;
+  try { const v = parseInt(localStorage.getItem('sobbyMode'), 10); if (v >= 0 && v < MODES.length) modeIndex = v; } catch (e) {}
+  function mode() { return MODES[modeIndex]; }
+  function levelAt(t) {
+    const md = mode();
+    if (t < md.rampTime) return Math.floor(md.startLevel + (md.rampLevel - md.startLevel) * t / md.rampTime);
+    return md.rampLevel + Math.floor((t - md.rampTime) / md.every);
+  }
+
+  // ---------- Highscore (én rekord for hver sværhedsgrad) ----------
+  const memHigh = {};  // reserve, hvis browseren ikke må gemme
+  function highKey(i = modeIndex) { return 'sobbyHigh_' + MODES[i].id; }
+  function loadHigh(i = modeIndex) {
+    try { const v = localStorage.getItem(highKey(i)); if (v !== null) return parseInt(v, 10) || 0; } catch (e) {}
+    return memHigh[i] !== undefined ? memHigh[i] : (testHigh || 0);
+  }
+  function saveHigh(v, i = modeIndex) { memHigh[i] = v; try { localStorage.setItem(highKey(i), String(v)); } catch (e) {} }
+  function saveAllHigh(v) { MODES.forEach((_, i) => saveHigh(v, i)); }
   // Test: åbn spillet med #rekord500 i slutningen af linket for at sætte rekorden til 500
   // (#rekord0 nulstiller rekorden). Virker også uden gemt data, så længe siden er åben.
-  const GAME_VERSION = 8;  // tælles op ved hver ny version
+  const GAME_VERSION = 9;  // tælles op ved hver ny version
   let testHigh = CFG.testHighscore;
   try {
     if (CFG.testHighscore !== null && localStorage.getItem('sobbyVersion') !== String(GAME_VERSION)) {
       localStorage.setItem('sobbyVersion', String(GAME_VERSION));
-      localStorage.setItem('sobbyHigh', String(CFG.testHighscore));
+      MODES.forEach((_, i) => localStorage.setItem(highKey(i), String(CFG.testHighscore)));
     }
   } catch (e) {}
   const m = /^#rekord(\d+)$/.exec(location.hash || '');
-  if (m) { testHigh = parseInt(m[1], 10); saveHigh(testHigh); }
+  if (m) { testHigh = parseInt(m[1], 10); saveAllHigh(testHigh); }
 
   // ---------- Spiltilstand ----------
   let state = 'start';  // start | play | pause | over
-  let sobby, obstacles, clouds, hills, score, level, speed, lives, invuln, spawnTimer, nextType, recordBeaten, banner, time, highscore, newHigh;
+  let sobby, obstacles, clouds, hills, score, level, speed, lives, invuln, spawnTimer, nextType, recordBeaten, playTime, banner, time, highscore, newHigh;
+
+  function speedFor(lvl) { return Math.min(CFG.startSpeed + (lvl - 1) * CFG.speedPerLevel, CFG.maxSpeed); }
 
   function reset() {
     sobby = { x: 130, y: GROUND, vy: 0, w: 54, h: 78, onGround: true, ducking: false, runPhase: 0 };
     obstacles = [];
-    score = 0; level = 1; speed = CFG.startSpeed; lives = CFG.lives;
-    invuln = 0; spawnTimer = 1.2; nextType = 'rock'; banner = { text: 'Niveau 1', t: 1.8 }; time = 0;
+    score = 0; playTime = 0; level = levelAt(0); speed = speedFor(level); lives = CFG.lives;
+    invuln = 0; spawnTimer = 1.0; nextType = 'rock'; banner = { text: mode().name + ' – niveau ' + level, t: 1.8 }; time = 0;
     highscore = loadHigh(); newHigh = false; recordBeaten = false;
   }
 
@@ -166,12 +190,37 @@
     input.jump = true;
   }
   function startGame() { reset(); state = 'play'; beep(660, 0.1); }
+  function selectMode(i) {
+    modeIndex = (i + MODES.length) % MODES.length;
+    try { localStorage.setItem('sobbyMode', String(modeIndex)); } catch (e) {}
+    highscore = loadHigh();
+    beep(520 + modeIndex * 120, 0.08);
+  }
+  // Knapper til sværhedsgrad på start- og slutskærmen (i spillets koordinater)
+  function modeButtonY() { return state === 'over' ? 196 : 186; }
+  function modeButtons() {
+    return MODES.map((md, i) => ({ i, x: W / 2 + (i - 1) * 200 - 85, y: modeButtonY(), w: 170, h: 46 }));
+  }
+  function pointerDown(clientX, clientY) {
+    if (state === 'start' || state === 'over') {
+      const r = canvas.getBoundingClientRect();
+      const x = (clientX - r.left) * W / r.width, y = (clientY - r.top) * H / r.height;
+      const hit = modeButtons().find(b => x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h);
+      if (hit) { selectMode(hit.i); startGame(); return; }
+    }
+    pressJump();
+  }
 
   window.addEventListener('keydown', e => {
     if (['ArrowUp', 'ArrowDown', ' ', 'Space'].includes(e.key) || e.code === 'Space') e.preventDefault();
     if (e.repeat) return;
     if (e.key === 'ArrowUp' || e.code === 'Space' || e.key === 'w') pressJump();
     if (e.key === 'ArrowDown' || e.key === 's') input.duck = true;
+    if (state === 'start' || state === 'over') {
+      if (e.key === '1' || e.key === '2' || e.key === '3') selectMode(parseInt(e.key, 10) - 1);
+      if (e.key === 'ArrowLeft') selectMode(modeIndex - 1);
+      if (e.key === 'ArrowRight') selectMode(modeIndex + 1);
+    }
     if ((e.key === 'p' || e.key === 'Escape') && (state === 'play' || state === 'pause')) state = state === 'play' ? 'pause' : 'play';
   });
   window.addEventListener('keyup', e => {
@@ -186,8 +235,8 @@
   btnJump.addEventListener('touchstart', e => { e.preventDefault(); e.stopPropagation(); pressJump(); }, { passive: false });
   btnDuck.addEventListener('touchstart', e => { e.preventDefault(); e.stopPropagation(); input.duck = true; }, { passive: false });
   btnDuck.addEventListener('touchend', e => { e.preventDefault(); input.duck = false; }, { passive: false });
-  canvas.addEventListener('touchstart', e => { e.preventDefault(); pressJump(); }, { passive: false });
-  canvas.addEventListener('mousedown', () => pressJump());
+  canvas.addEventListener('touchstart', e => { e.preventDefault(); const t = e.changedTouches[0]; pointerDown(t.clientX, t.clientY); }, { passive: false });
+  canvas.addEventListener('mousedown', e => pointerDown(e.clientX, e.clientY));
 
   // ---------- Forhindringer ----------
   // Typer: sten og busk (hop over), høj sten (præcist hop), stor sten (hop højt),
@@ -195,8 +244,10 @@
   // Fugleflokken går fra lige over Sobbys hoved, når den dukker sig, og så højt op,
   // at man ikke kan hoppe over den.
   const FLOCK_BOTTOM = GROUND - 56, FLOCK_TOP = GROUND - 275;
-  const BIRD_AFTER_GROUND = 1.2;  // sek. fra en jordforhindring til en flok: tid til at hoppe, lande og dukke
-  const GROUND_AFTER_BIRD = 1.0;  // sek. fra en flok til næste jordforhindring: tid til at rejse sig og hoppe
+  // Tid (sek.) fra en jordforhindring til en flok (hop, land, dyk) og fra en flok til næste
+  // jordforhindring (rejs dig, hop). Bliver strammere med niveauet, men kan altid klares.
+  function birdAfterGround() { return Math.max(1.15 - (level - 1) * 0.04, 0.85); }
+  function groundAfterBird() { return Math.max(1.05 - (level - 1) * 0.03, 0.8); }
   function rock(x) { return { type: 'rock', w: 54, h: 48, y: GROUND - 48, x }; }
 
   // En fugleflok har 3-5 fugle, der flyver forskudt. Den nederste er lige over Sobbys
@@ -257,8 +308,9 @@
     // Den korteste afstand giver altid tid til at lande og hoppe/dukke igen.
     const minGap = Math.max(1.05 - (level - 1) * 0.04, 0.8);
     const r = Math.random();
-    if (r < 0.35) spawnTimer = minGap + Math.random() * 0.25;            // tæt
-    else if (r < 0.75) spawnTimer = minGap + 0.4 + Math.random() * 0.5;  // mellem
+    const tight = Math.min(0.35 + (level - 1) * 0.04, 0.6);   // flere tætte forhindringer på højere niveauer
+    if (r < tight) spawnTimer = minGap + Math.random() * 0.25;          // tæt
+    else if (r < tight + 0.3) spawnTimer = minGap + 0.4 + Math.random() * 0.5;  // mellem
     else spawnTimer = minGap + 1.0 + Math.random() * 0.8;                // lang pause
     // Af og til to sten lige efter hinanden (klares med ét godt timet hop)
     if (level >= 4 && Math.random() < 0.15 && nextType === 'rock') {
@@ -268,8 +320,8 @@
     if (extra) spawnTimer += 0.4;
 
     nextType = chooseType(o.type);
-    if (nextType === 'bird') spawnTimer = Math.max(spawnTimer, BIRD_AFTER_GROUND + (extra ? 0.4 : 0));
-    if (o.type === 'bird') spawnTimer = Math.max(spawnTimer, GROUND_AFTER_BIRD);
+    if (nextType === 'bird') spawnTimer = Math.max(spawnTimer, birdAfterGround() + (extra ? 0.4 : 0));
+    if (o.type === 'bird') spawnTimer = Math.max(spawnTimer, groundAfterBird());
   }
 
   // ---------- Opdatering ----------
@@ -285,10 +337,11 @@
 
     // Point og niveau
     score += speed * dt * 0.05;
-    const newLevel = 1 + Math.floor(score / CFG.pointsPerLevel);
+    playTime += dt;
+    const newLevel = levelAt(playTime);
     if (newLevel > level) {
       level = newLevel;
-      speed = Math.min(CFG.startSpeed + (level - 1) * CFG.speedPerLevel, CFG.maxSpeed);
+      speed = speedFor(level);
       banner = { text: 'Niveau ' + level + '!', t: 2 };
       sfx.level();
     }
@@ -625,12 +678,25 @@
   function drawHUD() {
     for (let i = 0; i < CFG.lives; i++) drawHeart(30 + i * 34, 16, i < lives);
     text('Point: ' + Math.floor(score), W - 20, 40, 26, '#fff', 'right');
-    text('Niveau ' + level, W - 20, 72, 20, '#ffe066', 'right');
+    text(mode().name + ' · niveau ' + level, W - 20, 72, 20, '#ffe066', 'right');
     if (banner.t > 0 && state === 'play') {
       const a = Math.min(1, banner.t);
       ctx.globalAlpha = a;
       text(banner.text, W / 2, 125, 50, '#ffe066');
       ctx.globalAlpha = 1;
+    }
+  }
+
+  function drawModeButtons() {
+    const colors = ['#43a047', '#fb8c00', '#e53935'];
+    for (const b of modeButtons()) {
+      const sel = b.i === modeIndex;
+      ctx.fillStyle = colors[b.i];
+      ctx.globalAlpha = sel ? 1 : 0.6;
+      ctx.beginPath(); if (ctx.roundRect) ctx.roundRect(b.x, b.y, b.w, b.h, 14); else ctx.rect(b.x, b.y, b.w, b.h); ctx.fill();
+      ctx.globalAlpha = 1;
+      if (sel) { ctx.strokeStyle = '#fff'; ctx.lineWidth = 4; ctx.stroke(); }
+      text((b.i + 1) + '. ' + MODES[b.i].name, b.x + b.w / 2, b.y + 31, 22);
     }
   }
 
@@ -646,13 +712,14 @@
 
     if (state === 'start') {
       overlay();
-      text('Sobby Runner', W / 2, 85, 60, '#8bf28b');
-      text('Hjælp den lille trold Sobby med at løbe langt!', W / 2, 130, 24);
-      text('HOP:  pil op  /  mellemrum', W / 2, 175, 22, '#ffe066');
-      text('DUK:  pil ned', W / 2, 205, 22, '#ffe066');
-      if (Math.floor(time * 2) % 2 === 0) text('Tryk mellemrum eller på skærmen for at starte', W / 2, 255, 22);
-      if (highscore > 0) text('Bedste: ' + highscore, W / 2, 285, 18, '#ddd');
-    } else {
+      text('Sobby Runner', W / 2, 72, 56, '#8bf28b');
+      text('Hjælp den lille trold Sobby med at løbe langt!', W / 2, 112, 22);
+      text('HOP: pil op / mellemrum     DUK: pil ned', W / 2, 148, 19, '#ffe066');
+      text('Vælg sværhedsgrad:', W / 2, 176, 18, '#ddd');
+      drawModeButtons();
+      if (Math.floor(time * 2) % 2 === 0) text('Tryk på en sværhedsgrad for at starte', W / 2, 270, 20);
+      text('Bedste (' + mode().name + '): ' + highscore, W / 2, 298, 17, '#ddd');
+    } else if (state !== 'over') {
       drawHUD();
     }
     if (state === 'pause') {
@@ -662,10 +729,12 @@
     }
     if (state === 'over') {
       overlay();
-      text('Av! Spillet er slut', W / 2, 100, 50, '#ffb3b3');
-      text('Point: ' + Math.floor(score) + '    Niveau: ' + level, W / 2, 150, 28);
-      text(newHigh ? 'NY REKORD!' : 'Bedste: ' + highscore, W / 2, 190, 26, '#ffe066');
-      if (Math.floor(time * 2) % 2 === 0) text('Tryk mellemrum eller på skærmen for at prøve igen', W / 2, 245, 22);
+      text('Av! Spillet er slut', W / 2, 76, 46, '#ffb3b3');
+      text('Point: ' + Math.floor(score) + '    Niveau: ' + level, W / 2, 120, 26);
+      text(newHigh ? 'NY REKORD!' : 'Bedste (' + mode().name + '): ' + highscore, W / 2, 156, 22, '#ffe066');
+      text('Spil igen:', W / 2, 186, 17, '#ddd');
+      drawModeButtons();
+      if (Math.floor(time * 2) % 2 === 0) text('Tryk mellemrum for samme sværhedsgrad', W / 2, 282, 19);
     }
   }
 
@@ -681,7 +750,7 @@
   requestAnimationFrame(loop);
 
   // Til test
-  window.__sobby = { get state() { return state; }, get score() { return score; }, get level() { return level; }, get lives() { return lives; }, get obstacles() { return obstacles; } };
+  window.__sobby = { get state() { return state; }, get score() { return score; }, get level() { return level; }, get lives() { return lives; }, get obstacles() { return obstacles; }, get speed() { return speed; }, get playTime() { return playTime; }, get mode() { return mode().id; } };
 })();
 </script>
 </body>
