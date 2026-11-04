@@ -125,8 +125,13 @@
   };
 
   // ---------- Highscore ----------
-  function loadHigh() { try { return parseInt(localStorage.getItem('sobbyHigh') || '0', 10) || 0; } catch (e) { return 0; } }
-  function saveHigh(v) { try { localStorage.setItem('sobbyHigh', String(v)); } catch (e) {} }
+  function loadHigh() { try { const v = localStorage.getItem('sobbyHigh'); if (v !== null) return parseInt(v, 10) || 0; } catch (e) {} return testHigh || 0; }
+  function saveHigh(v) { testHigh = v; try { localStorage.setItem('sobbyHigh', String(v)); } catch (e) {} }
+  // Test: åbn spillet med #rekord500 i slutningen af linket for at sætte rekorden til 500
+  // (#rekord0 nulstiller rekorden). Virker også uden gemt data, så længe siden er åben.
+  let testHigh = null;
+  const m = /^#rekord(\d+)$/.exec(location.hash || '');
+  if (m) { testHigh = parseInt(m[1], 10); saveHigh(testHigh); }
 
   // ---------- Spiltilstand ----------
   let state = 'start';  // start | play | pause | over
