@@ -114,13 +114,13 @@
 
   // ---------- Spiltilstand ----------
   let state = 'start';  // start | play | pause | over
-  let sobby, obstacles, clouds, hills, score, level, speed, lives, invuln, spawnTimer, banner, time, highscore, newHigh;
+  let sobby, obstacles, clouds, hills, score, level, speed, lives, invuln, spawnTimer, nextType, banner, time, highscore, newHigh;
 
   function reset() {
     sobby = { x: 130, y: GROUND, vy: 0, w: 54, h: 78, onGround: true, ducking: false, runPhase: 0 };
     obstacles = [];
     score = 0; level = 1; speed = CFG.startSpeed; lives = CFG.lives;
-    invuln = 0; spawnTimer = 1.2; banner = { text: 'Niveau 1', t: 1.8 }; time = 0;
+    invuln = 0; spawnTimer = 1.2; nextType = 'rock'; banner = { text: 'Niveau 1', t: 1.8 }; time = 0;
     highscore = loadHigh(); newHigh = false;
   }
 
@@ -160,25 +160,38 @@
   canvas.addEventListener('mousedown', () => pressJump());
 
   // ---------- Forhindringer ----------
-  // Typer: sten og busk (hop over), fugleflok (kun duk under), stor sten (hop højt)
+  // Typer: sten og busk (hop over), høj sten (præcist hop), stor sten (hop højt),
+  // fugleflok (kan kun passeres ved at dukke sig).
   // Fugleflokken går fra lige over Sobbys hoved, når den dukker sig, og så højt op,
   // at man ikke kan hoppe over den.
   const FLOCK_BOTTOM = GROUND - 56, FLOCK_TOP = GROUND - 275;
+  const BIRD_AFTER_GROUND = 1.2;  // sek. fra en jordforhindring til en flok: tid til at hoppe, lande og dukke
+  const GROUND_AFTER_BIRD = 1.0;  // sek. fra en flok til næste jordforhindring: tid til at rejse sig og hoppe
   function rock(x) { return { type: 'rock', w: 54, h: 48, y: GROUND - 48, x }; }
 
-  function spawnObstacle() {
-    const roll = Math.random();
-    const birdChance = level >= 2 ? Math.min(0.15 + level * 0.04, 0.4) : 0;
-    let o;
-    if (roll < birdChance) {
-      o = { type: 'bird', w: 64, h: FLOCK_BOTTOM - FLOCK_TOP, y: FLOCK_TOP, flap: 0 };
-    } else if (level >= 3 && roll < birdChance + 0.2) {
-      o = { type: 'bigrock', w: 84, h: 66, y: GROUND - 66 };
-    } else if (Math.random() < 0.5) {
-      o = rock(0);
-    } else {
-      o = { type: 'bush', w: 72, h: 54, y: GROUND - 54 };
+  function makeObstacle(type) {
+    switch (type) {
+      case 'bird': return { type, w: 64, h: FLOCK_BOTTOM - FLOCK_TOP, y: FLOCK_TOP, flap: 0 };
+      case 'tallrock': return { type, w: 50, h: 120, y: GROUND - 120 };
+      case 'bigrock': return { type, w: 84, h: 66, y: GROUND - 66 };
+      case 'bush': return { type, w: 72, h: 54, y: GROUND - 54 };
+      default: return rock(0);
     }
+  }
+
+  // Vælg næste forhindring. Der kommer aldrig to fugleflokke lige efter hinanden.
+  function chooseType(prev) {
+    const birdChance = Math.min(0.2 + (level - 1) * 0.03, 0.4);
+    if (prev !== 'bird' && Math.random() < birdChance) return 'bird';
+    const r = Math.random();
+    const tallChance = level >= 2 ? Math.min(0.1 + level * 0.03, 0.3) : 0;
+    if (r < tallChance) return 'tallrock';
+    if (level >= 3 && r < tallChance + 0.2) return 'bigrock';
+    return Math.random() < 0.5 ? 'rock' : 'bush';
+  }
+
+  function spawnObstacle() {
+    const o = makeObstacle(nextType);
     o.x = W + 20;
     obstacles.push(o);
 
@@ -190,10 +203,16 @@
     else if (r < 0.75) spawnTimer = minGap + 0.4 + Math.random() * 0.5;  // mellem
     else spawnTimer = minGap + 1.0 + Math.random() * 0.8;                // lang pause
     // Af og til to sten lige efter hinanden (klares med ét godt timet hop)
+    let doubled = false;
     if (level >= 4 && Math.random() < 0.15 && o.type === 'rock') {
       obstacles.push(rock(o.x + o.w + 60));
       spawnTimer += 0.4;
+      doubled = true;
     }
+
+    nextType = chooseType(o.type);
+    if (nextType === 'bird') spawnTimer = Math.max(spawnTimer, BIRD_AFTER_GROUND + (doubled ? 0.4 : 0));
+    if (o.type === 'bird') spawnTimer = Math.max(spawnTimer, GROUND_AFTER_BIRD);
   }
 
   // ---------- Opdatering ----------
@@ -235,7 +254,7 @@
     // Forhindringer
     spawnTimer -= dt;
     if (spawnTimer <= 0) spawnObstacle();
-    obstacles.forEach(o => { o.x -= speed * dt; if (o.type === 'bird') { o.x -= 40 * dt; o.flap += dt * 12; } });
+    obstacles.forEach(o => { o.x -= speed * dt; if (o.type === 'bird') o.flap += dt * 12; });
     obstacles = obstacles.filter(o => o.x + o.w > -20);
 
     // Kollision
@@ -391,7 +410,19 @@
 
   function drawObstacle(o) {
     ctx.save();
-    if (o.type === 'rock' || o.type === 'bigrock') {
+    if (o.type === 'tallrock') {
+      ctx.fillStyle = '#7a7f87';
+      ctx.beginPath();
+      ctx.moveTo(o.x, o.y + o.h);
+      ctx.lineTo(o.x + 4, o.y + 18);
+      ctx.quadraticCurveTo(o.x + o.w * 0.5, o.y - 8, o.x + o.w - 4, o.y + 14);
+      ctx.lineTo(o.x + o.w, o.y + o.h);
+      ctx.closePath(); ctx.fill();
+      ctx.fillStyle = '#a3a8b0';
+      ctx.fillRect(o.x + 12, o.y + 22, 7, o.h - 40);
+      ctx.fillStyle = '#5f9e47';
+      ctx.beginPath(); ctx.ellipse(o.x + o.w * 0.55, o.y + 6, 12, 5, 0, 0, Math.PI * 2); ctx.fill();
+    } else if (o.type === 'rock' || o.type === 'bigrock') {
       ctx.fillStyle = '#8d8d8d';
       ctx.beginPath();
       ctx.moveTo(o.x, o.y + o.h);
