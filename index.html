@@ -30,8 +30,8 @@
   }
   .btn {
     position: absolute;
-    width: 96px;
-    height: 96px;
+    width: 88px;
+    height: 88px;
     border-radius: 50%;
     border: 4px solid rgba(255,255,255,.8);
     background: rgba(255,255,255,.25);
@@ -45,10 +45,10 @@
   }
   body.touch .btn { display: flex; }
   /* Liggende skærm: knapperne står i hver sin kolonne ved siden af spillet */
-  body.touch.side #wrap { padding: 0 124px; }
-  body.touch.side .btn { bottom: calc(24% + env(safe-area-inset-bottom, 0px)); }
-  body.touch.side #btnDuck { left: calc(14px + env(safe-area-inset-left, 0px)); }
-  body.touch.side #btnJump { right: calc(14px + env(safe-area-inset-right, 0px)); }
+  body.touch.side #wrap { padding: 0 108px; }
+  body.touch.side .btn { bottom: calc(5% + env(safe-area-inset-bottom, 0px)); }
+  body.touch.side #btnDuck { left: calc(10px + env(safe-area-inset-left, 0px)); }
+  body.touch.side #btnJump { right: calc(10px + env(safe-area-inset-right, 0px)); }
   /* Stående skærm: knapperne står i en bjælke under spillet */
   body.touch.bottom #wrap { padding-bottom: 140px; }
   body.touch.bottom .btn { bottom: calc(22px + env(safe-area-inset-bottom, 0px)); }
@@ -64,12 +64,12 @@
 <script>
 (() => {
   // ---------- Opsætning ----------
-  const W = 960, H = 420;          // Spillets "logiske" størrelse
-  const GROUND = 340;              // Hvor jorden er
+  const W = 720, H = 360;          // Spillets "logiske" størrelse (mindre = mere zoomet ind)
+  const GROUND = 300;              // Hvor jorden er
   const canvas = document.getElementById('game');
   const ctx = canvas.getContext('2d');
 
-  const SIDE = 124, BOTTOM = 140;  // plads til touch-knapperne uden for spillet
+  const SIDE = 108, BOTTOM = 140;  // plads til touch-knapperne uden for spillet
   function resize() {
     let availW = window.innerWidth, availH = window.innerHeight;
     const body = document.body;
@@ -344,7 +344,7 @@
 
     // Sol
     ctx.fillStyle = '#ffe066';
-    ctx.beginPath(); ctx.arc(820, 80, 42, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(W - 250, 70, 38, 0, Math.PI * 2); ctx.fill();
 
     // Skyer
     ctx.fillStyle = '#fff';
@@ -585,7 +585,7 @@
     if (banner.t > 0 && state === 'play') {
       const a = Math.min(1, banner.t);
       ctx.globalAlpha = a;
-      text(banner.text, W / 2, 140, 54, '#ffe066');
+      text(banner.text, W / 2, 125, 50, '#ffe066');
       ctx.globalAlpha = 1;
     }
   }
@@ -602,12 +602,12 @@
 
     if (state === 'start') {
       overlay();
-      text('Sobby Runner', W / 2, 110, 64, '#8bf28b');
-      text('Hjælp den lille trold Sobby med at løbe langt!', W / 2, 160, 24);
-      text('HOP:  pil op  /  mellemrum', W / 2, 210, 22, '#ffe066');
-      text('DUK:  pil ned', W / 2, 242, 22, '#ffe066');
-      if (Math.floor(time * 2) % 2 === 0) text('Tryk mellemrum eller på skærmen for at starte', W / 2, 300, 22);
-      if (highscore > 0) text('Bedste: ' + highscore, W / 2, 330, 18, '#ddd');
+      text('Sobby Runner', W / 2, 85, 60, '#8bf28b');
+      text('Hjælp den lille trold Sobby med at løbe langt!', W / 2, 130, 24);
+      text('HOP:  pil op  /  mellemrum', W / 2, 175, 22, '#ffe066');
+      text('DUK:  pil ned', W / 2, 205, 22, '#ffe066');
+      if (Math.floor(time * 2) % 2 === 0) text('Tryk mellemrum eller på skærmen for at starte', W / 2, 255, 22);
+      if (highscore > 0) text('Bedste: ' + highscore, W / 2, 285, 18, '#ddd');
     } else {
       drawHUD();
     }
@@ -618,10 +618,10 @@
     }
     if (state === 'over') {
       overlay();
-      text('Av! Spillet er slut', W / 2, 120, 52, '#ffb3b3');
-      text('Point: ' + Math.floor(score) + '    Niveau: ' + level, W / 2, 175, 28);
-      text(newHigh ? 'NY REKORD!' : 'Bedste: ' + highscore, W / 2, 215, 26, '#ffe066');
-      if (Math.floor(time * 2) % 2 === 0) text('Tryk mellemrum eller på skærmen for at prøve igen', W / 2, 280, 22);
+      text('Av! Spillet er slut', W / 2, 100, 50, '#ffb3b3');
+      text('Point: ' + Math.floor(score) + '    Niveau: ' + level, W / 2, 150, 28);
+      text(newHigh ? 'NY REKORD!' : 'Bedste: ' + highscore, W / 2, 190, 26, '#ffe066');
+      if (Math.floor(time * 2) % 2 === 0) text('Tryk mellemrum eller på skærmen for at prøve igen', W / 2, 245, 22);
     }
   }
 
