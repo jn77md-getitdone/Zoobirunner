@@ -18,6 +18,7 @@
   #wrap {
     position: absolute;
     inset: 0;
+    box-sizing: border-box;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -29,7 +30,6 @@
   }
   .btn {
     position: absolute;
-    bottom: 16px;
     width: 96px;
     height: 96px;
     border-radius: 50%;
@@ -43,9 +43,17 @@
     justify-content: center;
     text-shadow: 0 2px 3px rgba(0,0,0,.5);
   }
-  #btnJump { right: 16px; }
-  #btnDuck { left: 16px; }
   body.touch .btn { display: flex; }
+  /* Liggende skærm: knapperne står i hver sin kolonne ved siden af spillet */
+  body.touch.side #wrap { padding: 0 124px; }
+  body.touch.side .btn { bottom: calc(24% + env(safe-area-inset-bottom, 0px)); }
+  body.touch.side #btnDuck { left: calc(14px + env(safe-area-inset-left, 0px)); }
+  body.touch.side #btnJump { right: calc(14px + env(safe-area-inset-right, 0px)); }
+  /* Stående skærm: knapperne står i en bjælke under spillet */
+  body.touch.bottom #wrap { padding-bottom: 140px; }
+  body.touch.bottom .btn { bottom: calc(22px + env(safe-area-inset-bottom, 0px)); }
+  body.touch.bottom #btnDuck { left: calc(28px + env(safe-area-inset-left, 0px)); }
+  body.touch.bottom #btnJump { right: calc(28px + env(safe-area-inset-right, 0px)); }
 </style>
 </head>
 <body>
@@ -61,8 +69,16 @@
   const canvas = document.getElementById('game');
   const ctx = canvas.getContext('2d');
 
+  const SIDE = 124, BOTTOM = 140;  // plads til touch-knapperne uden for spillet
   function resize() {
-    const scale = Math.min(window.innerWidth / W, window.innerHeight / H);
+    let availW = window.innerWidth, availH = window.innerHeight;
+    const body = document.body;
+    body.classList.remove('side', 'bottom');
+    if (body.classList.contains('touch')) {
+      if (availW > availH) { body.classList.add('side'); availW -= 2 * SIDE; }
+      else { body.classList.add('bottom'); availH -= BOTTOM; }
+    }
+    const scale = Math.min(availW / W, availH / H);
     const dpr = window.devicePixelRatio || 1;
     canvas.style.width = (W * scale) + 'px';
     canvas.style.height = (H * scale) + 'px';
@@ -114,14 +130,14 @@
 
   // ---------- Spiltilstand ----------
   let state = 'start';  // start | play | pause | over
-  let sobby, obstacles, clouds, hills, score, level, speed, lives, invuln, spawnTimer, nextType, banner, time, highscore, newHigh;
+  let sobby, obstacles, clouds, hills, score, level, speed, lives, invuln, spawnTimer, nextType, recordBeaten, banner, time, highscore, newHigh;
 
   function reset() {
     sobby = { x: 130, y: GROUND, vy: 0, w: 54, h: 78, onGround: true, ducking: false, runPhase: 0 };
     obstacles = [];
     score = 0; level = 1; speed = CFG.startSpeed; lives = CFG.lives;
     invuln = 0; spawnTimer = 1.2; nextType = 'rock'; banner = { text: 'Niveau 1', t: 1.8 }; time = 0;
-    highscore = loadHigh(); newHigh = false;
+    highscore = loadHigh(); newHigh = false; recordBeaten = false;
   }
 
   clouds = Array.from({ length: 5 }, (_, i) => ({ x: i * 220 + Math.random() * 100, y: 40 + Math.random() * 90, s: 0.6 + Math.random() * 0.6 }));
@@ -152,7 +168,8 @@
   // Touch: knapper + tryk på skærmen for at starte
   const btnJump = document.getElementById('btnJump');
   const btnDuck = document.getElementById('btnDuck');
-  window.addEventListener('touchstart', () => document.body.classList.add('touch'), { once: true, passive: true });
+  window.addEventListener('touchstart', () => { document.body.classList.add('touch'); resize(); }, { once: true, passive: true });
+  if (window.matchMedia && matchMedia('(pointer: coarse)').matches) { document.body.classList.add('touch'); resize(); }
   btnJump.addEventListener('touchstart', e => { e.preventDefault(); e.stopPropagation(); pressJump(); }, { passive: false });
   btnDuck.addEventListener('touchstart', e => { e.preventDefault(); e.stopPropagation(); input.duck = true; }, { passive: false });
   btnDuck.addEventListener('touchend', e => { e.preventDefault(); input.duck = false; }, { passive: false });
@@ -169,9 +186,22 @@
   const GROUND_AFTER_BIRD = 1.0;  // sek. fra en flok til næste jordforhindring: tid til at rejse sig og hoppe
   function rock(x) { return { type: 'rock', w: 54, h: 48, y: GROUND - 48, x }; }
 
+  // En fugleflok har 3-5 fugle, der flyver forskudt. Den nederste er lige over Sobbys
+  // hoved, når den dukker sig, og den øverste er så højt, at man ikke kan hoppe over.
+  function makeFlock() {
+    const n = 3 + Math.floor(Math.random() * 3);
+    const step = (FLOCK_BOTTOM - FLOCK_TOP - 30) / (n - 1);
+    const birds = [];
+    for (let i = 0; i < n; i++) {
+      birds.push({ dx: Math.random() * 44, dy: FLOCK_BOTTOM - 15 - i * step - FLOCK_TOP + (Math.random() * 10 - 5), ph: Math.random() * 6 });
+    }
+    const maxDx = Math.max(...birds.map(b => b.dx));
+    return { type: 'bird', w: 68 + maxDx, h: FLOCK_BOTTOM - FLOCK_TOP, y: FLOCK_TOP, flap: 0, birds };
+  }
+
   function makeObstacle(type) {
     switch (type) {
-      case 'bird': return { type, w: 64, h: FLOCK_BOTTOM - FLOCK_TOP, y: FLOCK_TOP, flap: 0 };
+      case 'bird': return makeFlock();
       case 'tallrock': return { type, w: 50, h: 120, y: GROUND - 120 };
       case 'bigrock': return { type, w: 84, h: 66, y: GROUND - 66 };
       case 'bush': return { type, w: 72, h: 54, y: GROUND - 54 };
@@ -179,10 +209,14 @@
     }
   }
 
+  // Lavtflyvende fugl: for lav til at dukke sig under, så man skal hoppe over den
+  function lowBird(x, bottom) { return { type: 'lowbird', w: 68, h: 30, y: GROUND - bottom - 30, x, flap: Math.random() * 6 }; }
+
   // Vælg næste forhindring. Der kommer aldrig to fugleflokke lige efter hinanden.
   function chooseType(prev) {
-    const birdChance = Math.min(0.2 + (level - 1) * 0.03, 0.4);
+    const birdChance = Math.min(0.4 + (level - 1) * 0.03, 0.55);
     if (prev !== 'bird' && Math.random() < birdChance) return 'bird';
+    if (level >= 4 && Math.random() < 0.25) return 'combo';
     const r = Math.random();
     const tallChance = level >= 2 ? Math.min(0.1 + level * 0.03, 0.3) : 0;
     if (r < tallChance) return 'tallrock';
@@ -191,9 +225,20 @@
   }
 
   function spawnObstacle() {
-    const o = makeObstacle(nextType);
-    o.x = W + 20;
-    obstacles.push(o);
+    let extra = false;   // længere forhindring, der kræver lidt mere tid bagefter
+    let o;
+    if (nextType === 'combo') {
+      // Sten + 1-2 lavtflyvende fugle lige bagved: klares med ét langt hop
+      o = rock(W + 20);
+      obstacles.push(o);
+      obstacles.push(lowBird(o.x + o.w, 10 + Math.random() * 8));
+      if (Math.random() < 0.5) obstacles.push(lowBird(o.x + o.w + 24, 14 + Math.random() * 6));
+      extra = true;
+    } else {
+      o = makeObstacle(nextType);
+      o.x = W + 20;
+      obstacles.push(o);
+    }
 
     // Tid til næste forhindring: varieret afstand fra starten (tæt, mellem, lang).
     // Den korteste afstand giver altid tid til at lande og hoppe/dukke igen.
@@ -203,15 +248,14 @@
     else if (r < 0.75) spawnTimer = minGap + 0.4 + Math.random() * 0.5;  // mellem
     else spawnTimer = minGap + 1.0 + Math.random() * 0.8;                // lang pause
     // Af og til to sten lige efter hinanden (klares med ét godt timet hop)
-    let doubled = false;
-    if (level >= 4 && Math.random() < 0.15 && o.type === 'rock') {
+    if (level >= 4 && Math.random() < 0.15 && nextType === 'rock') {
       obstacles.push(rock(o.x + o.w + 60));
-      spawnTimer += 0.4;
-      doubled = true;
+      extra = true;
     }
+    if (extra) spawnTimer += 0.4;
 
     nextType = chooseType(o.type);
-    if (nextType === 'bird') spawnTimer = Math.max(spawnTimer, BIRD_AFTER_GROUND + (doubled ? 0.4 : 0));
+    if (nextType === 'bird') spawnTimer = Math.max(spawnTimer, BIRD_AFTER_GROUND + (extra ? 0.4 : 0));
     if (o.type === 'bird') spawnTimer = Math.max(spawnTimer, GROUND_AFTER_BIRD);
   }
 
@@ -235,6 +279,11 @@
       banner = { text: 'Niveau ' + level + '!', t: 2 };
       sfx.level();
     }
+    if (!recordBeaten && highscore > 0 && score > highscore) {
+      recordBeaten = true;
+      banner = { text: 'Ny rekord!', t: 2 };
+      sfx.level();
+    }
 
     // Sobby
     const s = sobby;
@@ -254,7 +303,7 @@
     // Forhindringer
     spawnTimer -= dt;
     if (spawnTimer <= 0) spawnObstacle();
-    obstacles.forEach(o => { o.x -= speed * dt; if (o.type === 'bird') o.flap += dt * 12; });
+    obstacles.forEach(o => { o.x -= speed * dt; if (o.flap !== undefined) o.flap += dt * 12; });
     obstacles = obstacles.filter(o => o.x + o.w > -20);
 
     // Kollision
@@ -379,6 +428,21 @@
 
     ctx.fillStyle = green;
     ctx.beginPath(); ctx.arc(4, hy, 20, 0, Math.PI * 2); ctx.fill();
+    // Bliver mere og mere rød i hovedet, jo højere niveau
+    const red = Math.min((level - 1) / 7, 1);
+    if (red > 0) {
+      // Rødmen starter på kinderne og breder sig over hele ansigtet
+      const r = 8 + 16 * red;
+      const grad = ctx.createRadialGradient(6, hy + 3, 0, 6, hy + 3, r);
+      grad.addColorStop(0, `rgba(255, 60, 60, ${0.5 + 0.45 * red})`);
+      grad.addColorStop(0.6, `rgba(255, 60, 60, ${0.35 + 0.45 * red})`);
+      grad.addColorStop(1, 'rgba(255, 60, 60, 0)');
+      ctx.save();
+      ctx.beginPath(); ctx.arc(4, hy, 20, 0, Math.PI * 2); ctx.clip();
+      ctx.fillStyle = grad;
+      ctx.fillRect(-20, hy - 22, 48, 44);
+      ctx.restore();
+    }
 
     // Øjne
     ctx.fillStyle = '#fff';
@@ -394,6 +458,33 @@
     ctx.fillStyle = 'rgba(248,165,194,.6)';
     ctx.beginPath(); ctx.arc(-6, hy + 6, 4, 0, Math.PI * 2); ctx.fill();
 
+    // Sveder, når man er tæt på rekorden (inden for 100 point)
+    if (state === 'play' && highscore > 0 && !recordBeaten && score >= highscore - 100) {
+      for (let i = 0; i < 3; i++) {
+        const t = (time * 1.6 + i / 3) % 1;          // hver dråbe går fra 0 til 1
+        const side = i === 1 ? 1 : -1;
+        const dx = side * (14 + t * 22) + 4;
+        const dy = hy - 16 + t * t * 40 - t * 18;
+        drawDrop(dx, dy, 1 - t * 0.6);
+      }
+      drawDrop(-8, hy - 12, 1);  // dråbe på panden
+    }
+
+    ctx.restore();
+  }
+
+  function drawDrop(x, y, alpha) {
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = '#64b5f6';
+    ctx.beginPath();
+    ctx.moveTo(x, y - 11);
+    ctx.quadraticCurveTo(x + 8, y, x, y + 6);
+    ctx.quadraticCurveTo(x - 8, y, x, y - 11);
+    ctx.fill();
+    ctx.strokeStyle = '#1e88e5'; ctx.lineWidth = 1.2; ctx.stroke();
+    ctx.fillStyle = 'rgba(255,255,255,.9)';
+    ctx.beginPath(); ctx.arc(x - 2, y, 1.8, 0, Math.PI * 2); ctx.fill();
     ctx.restore();
   }
 
@@ -444,12 +535,10 @@
       ctx.fillStyle = '#e53935';
       [[18, 18], [38, 12], [46, 30], [26, 32]].forEach(([dx, dy]) => { ctx.beginPath(); ctx.arc(dx, dy, 3.5, 0, Math.PI * 2); ctx.fill(); });
     } else if (o.type === 'bird') {
-      // En flok på 4 fugle stablet oven på hinanden
-      for (let i = 0; i < 4; i++) {
-        const cx = o.x + o.w / 2 + (i % 2 ? 10 : -4);
-        const cy = o.y + o.h - 22 - i * 56;
-        drawBird(cx, cy, o.flap + i * 1.3);
-      }
+      // Flok af forskudte fugle
+      for (const b of o.birds) drawBird(o.x + 42 + b.dx, o.y + b.dy, o.flap + b.ph);
+    } else if (o.type === 'lowbird') {
+      drawBird(o.x + 42, o.y + o.h / 2, o.flap);
     }
     ctx.restore();
   }
